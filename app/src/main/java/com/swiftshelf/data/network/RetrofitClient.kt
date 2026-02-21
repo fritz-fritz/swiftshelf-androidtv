@@ -44,7 +44,8 @@ object RetrofitClient {
         }
     }
 
-    fun initialize(baseUrl: String, token: String, refreshToken: String? = null) {
+    fun initialize(baseUrl: String, token: String, refreshToken: String? = null,
+                   onTokensRefreshed: ((accessToken: String, refreshToken: String?) -> Unit)? = null) {
         this.baseUrl = baseUrl
         apiToken = token
         storedRefreshToken = refreshToken
@@ -76,6 +77,11 @@ object RetrofitClient {
                             if (refreshResult.refreshToken != null) {
                                 storedRefreshToken = refreshResult.refreshToken
                             }
+                            // Notify the caller so tokens can be persisted
+                            onTokensRefreshed?.invoke(
+                                refreshResult.accessToken,
+                                refreshResult.refreshToken ?: storedRefreshToken
+                            )
                         }
                         refreshResult?.accessToken
                     } else {

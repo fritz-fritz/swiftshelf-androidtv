@@ -114,7 +114,10 @@ fun LoginScreen(
                             visualTransformation = PasswordVisualTransformation(),
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Password,
+                                // KeyboardType.Text (not Password) avoids IME character limits
+                                // that truncate long API keys on some Android TV keyboards.
+                                // PasswordVisualTransformation still shows dots visually.
+                                keyboardType = KeyboardType.Text,
                                 imeAction = ImeAction.Done
                             ),
                             keyboardActions = KeyboardActions(

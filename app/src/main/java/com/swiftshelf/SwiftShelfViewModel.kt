@@ -190,8 +190,12 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 val formattedHost = formatHost(host)
                 Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost hasRefresh=${refreshToken != null}")
 
-                // Initialize Retrofit
-                RetrofitClient.initialize(formattedHost, key, refreshToken)
+                // Initialize Retrofit, persisting any rotated JWT tokens automatically
+                RetrofitClient.initialize(formattedHost, key, refreshToken) { newAccess, newRefresh ->
+                    Log.d("SwiftShelf", "Token rotated — persisting updated tokens")
+                    securePrefs.saveApiKey(newAccess)
+                    securePrefs.saveRefreshToken(newRefresh)
+                }
 
                 // Initialize repository after RetrofitClient
                 repository = AudiobookRepository()
@@ -242,8 +246,13 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                     Log.d("SwiftShelf", "connectWithUsernamePassword: gotJwt=${body.user?.accessToken != null} hasRefresh=${refreshToken != null} tokenLen=${token?.length}")
 
                     if (token != null) {
-                        // Now initialize with the token and optional refresh token
-                        RetrofitClient.initialize(formattedHost, token, refreshToken)
+                        // Now initialize with the token and optional refresh token,
+                        // persisting any rotated JWT tokens automatically
+                        RetrofitClient.initialize(formattedHost, token, refreshToken) { newAccess, newRefresh ->
+                            Log.d("SwiftShelf", "Token rotated — persisting updated tokens")
+                            securePrefs.saveApiKey(newAccess)
+                            securePrefs.saveRefreshToken(newRefresh)
+                        }
                         repository = AudiobookRepository()
 
                         // Fetch libraries to verify
@@ -573,6 +582,25 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun logout() {
+        // For JWT sessions, notify the server to invalidate the refresh token.
+        // Capture the API reference now (before local state is cleared) so the
+        // coroutine always uses the current session's authenticated client.
+        val hasJwtSession = securePrefs.getRefreshToken() != null
+        val apiForLogout = if (hasJwtSession && RetrofitClient.isInitialized()) {
+            RetrofitClient.getApi()
+        } else null
+
+        if (apiForLogout != null) {
+            viewModelScope.launch {
+                try {
+                    apiForLogout.logout()
+                    Log.d("SwiftShelf", "logout: server session invalidated")
+                } catch (e: Exception) {
+                    Log.w("SwiftShelf", "logout: server logout failed (ignored) - ${e.message}")
+                }
+            }
+        }
+
         audioManager?.release()
         audioManager = null
         repository = null  // Clear repository so it gets recreated with new token on next login

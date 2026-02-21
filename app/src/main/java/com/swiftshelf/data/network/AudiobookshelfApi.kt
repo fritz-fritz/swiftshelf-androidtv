@@ -17,6 +17,10 @@ interface AudiobookshelfApi {
     @POST("auth/refresh")
     suspend fun refreshToken(): Response<RefreshResponse>
 
+    // Logout — invalidates the server-side refresh token session
+    @POST("logout")
+    suspend fun logout(): Response<Unit>
+
     @GET("api/libraries")
     suspend fun getLibraries(): Response<LibraryResponse>
 
