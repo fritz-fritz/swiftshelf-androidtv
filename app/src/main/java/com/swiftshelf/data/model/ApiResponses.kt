@@ -55,12 +55,21 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
-    val user: LoginUser,
-    val userDefaultLibraryId: String?
+    // Old format fields
+    val user: LoginUser?,
+    val userDefaultLibraryId: String?,
+    // New JWT format fields
+    val accessToken: String?,
+    val refreshToken: String?
 )
 
 data class LoginUser(
     val id: String,
     val username: String,
-    val token: String
+    val token: String?
+)
+
+// JWT refresh response
+data class RefreshResponse(
+    val accessToken: String
 )

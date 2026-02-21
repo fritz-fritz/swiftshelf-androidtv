@@ -1,29 +1,79 @@
 package com.swiftshelf.data.network
 
+import com.google.gson.Gson
 import com.swiftshelf.BuildConfig
+import com.swiftshelf.data.model.RefreshResponse
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
 
     private var retrofit: Retrofit? = null
-    private var apiToken: String? = null
+    @Volatile private var apiToken: String? = null
+    @Volatile private var baseUrl: String? = null
+
+    // Lock to prevent concurrent token refresh races
+    private val refreshLock = Any()
+
+    // Shared cookie jar for all clients so refresh token cookies are preserved
+    private val cookieJar = object : CookieJar {
+        private val cookieStore = ConcurrentHashMap<String, List<Cookie>>()
+
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            cookieStore[url.host] = cookies
+        }
+
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            return cookieStore[url.host] ?: emptyList()
+        }
+    }
 
     fun initialize(baseUrl: String, token: String) {
+        this.baseUrl = baseUrl
         apiToken = token
 
         val authInterceptor = Interceptor { chain ->
             val original = chain.request()
+            val currentToken = apiToken
             val requestBuilder = original.newBuilder()
-                .header("Authorization", "Bearer $token")
+                .apply { if (currentToken != null) header("Authorization", "Bearer $currentToken") }
                 .method(original.method, original.body)
+            chain.proceed(requestBuilder.build())
+        }
 
-            val request = requestBuilder.build()
-            chain.proceed(request)
+        val tokenRefreshInterceptor = Interceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            // Don't attempt refresh on the refresh endpoint itself (avoid infinite loop)
+            if (response.code == 401 && !request.url.encodedPath.endsWith("auth/refresh")) {
+                response.close()
+                val newToken = synchronized(refreshLock) {
+                    // If another thread already refreshed, reuse the updated token
+                    val requestToken = request.header("Authorization")?.removePrefix("Bearer ")
+                    if (requestToken == apiToken) {
+                        attemptTokenRefresh()?.also { apiToken = it }
+                    } else {
+                        apiToken
+                    }
+                }
+                if (newToken != null) {
+                    val newRequest = request.newBuilder()
+                        .header("Authorization", "Bearer $newToken")
+                        .build()
+                    return@Interceptor chain.proceed(newRequest)
+                }
+            }
+            response
         }
 
         val loggingLevel = if (BuildConfig.DEBUG) {
@@ -37,7 +87,9 @@ object RetrofitClient {
         }
 
         val client = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
             .addInterceptor(authInterceptor)
+            .addInterceptor(tokenRefreshInterceptor)
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -51,8 +103,34 @@ object RetrofitClient {
             .build()
     }
 
+    private fun attemptTokenRefresh(): String? {
+        val url = baseUrl ?: return null
+        return try {
+            val client = OkHttpClient.Builder()
+                .cookieJar(cookieJar)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
+            val refreshUrl = "${url.trimEnd('/')}/auth/refresh"
+            val request = Request.Builder()
+                .url(refreshUrl)
+                .post("".toRequestBody())
+                .build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                Gson().fromJson(body, RefreshResponse::class.java)?.accessToken
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /**
-     * Create an unauthenticated API client for login requests
+     * Create an unauthenticated API client for login requests.
+     * Uses the shared cookie jar so that refresh token cookies from login are retained.
      */
     fun createUnauthenticatedApi(baseUrl: String): AudiobookshelfApi {
         val loggingLevel = if (BuildConfig.DEBUG) {
@@ -65,6 +143,7 @@ object RetrofitClient {
         }
 
         val client = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)

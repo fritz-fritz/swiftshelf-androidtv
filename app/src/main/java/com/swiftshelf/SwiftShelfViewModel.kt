@@ -225,18 +225,26 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 val loginResponse = unauthApi.login(loginRequest)
 
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {
-                    val token = loginResponse.body()!!.user.token
+                    val body = loginResponse.body()!!
 
-                    // Now initialize with the token
-                    RetrofitClient.initialize(formattedHost, token)
-                    repository = AudiobookRepository()
+                    // Support both new JWT format (accessToken) and old format (user.token)
+                    val token = body.accessToken ?: body.user?.token
 
-                    // Fetch libraries to verify
-                    val result = repository!!.getLibraries()
-                    result.onSuccess { libs ->
-                        onConnectionSuccess(libs, formattedHost, token)
-                    }.onFailure { error ->
-                        _errorMessage.value = error.message ?: "Failed to fetch libraries"
+                    if (token != null) {
+                        // Now initialize with the token
+                        RetrofitClient.initialize(formattedHost, token)
+                        repository = AudiobookRepository()
+
+                        // Fetch libraries to verify
+                        val result = repository!!.getLibraries()
+                        result.onSuccess { libs ->
+                            onConnectionSuccess(libs, formattedHost, token)
+                        }.onFailure { error ->
+                            _errorMessage.value = error.message ?: "Failed to fetch libraries"
+                            _uiState.value = UiState.Login
+                        }
+                    } else {
+                        _errorMessage.value = "Invalid login response"
                         _uiState.value = UiState.Login
                     }
                 } else {

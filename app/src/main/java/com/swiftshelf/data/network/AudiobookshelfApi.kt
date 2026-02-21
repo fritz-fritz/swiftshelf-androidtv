@@ -12,6 +12,10 @@ interface AudiobookshelfApi {
         @Body request: LoginRequest
     ): Response<LoginResponse>
 
+    // JWT token refresh
+    @POST("auth/refresh")
+    suspend fun refreshToken(): Response<RefreshResponse>
+
     @GET("api/libraries")
     suspend fun getLibraries(): Response<LibraryResponse>
 
