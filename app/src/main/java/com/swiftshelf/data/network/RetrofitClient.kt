@@ -7,6 +7,7 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -21,7 +22,7 @@ object RetrofitClient {
     private var retrofit: Retrofit? = null
     @Volatile private var apiToken: String? = null
     @Volatile private var baseUrl: String? = null
-    @Volatile private var isJwtAuth: Boolean = false
+    @Volatile private var storedRefreshToken: String? = null
 
     // Gson instance with HTML escaping disabled so passwords with <, >, &, etc. are
     // serialized as literal characters rather than \u003c Unicode escapes.
@@ -43,10 +44,10 @@ object RetrofitClient {
         }
     }
 
-    fun initialize(baseUrl: String, token: String, isJwt: Boolean = false) {
+    fun initialize(baseUrl: String, token: String, refreshToken: String? = null) {
         this.baseUrl = baseUrl
         apiToken = token
-        isJwtAuth = isJwt
+        storedRefreshToken = refreshToken
 
         val authInterceptor = Interceptor { chain ->
             val original = chain.request()
@@ -60,14 +61,23 @@ object RetrofitClient {
         val tokenRefreshInterceptor = Interceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
-            // Don't attempt refresh on the refresh endpoint itself (avoid infinite loop).
-            // Only attempt refresh for JWT auth — API keys have no refresh token.
-            if (response.code == 401 && isJwtAuth && !request.url.encodedPath.endsWith("auth/refresh")) {
+            // Only attempt refresh when we have a refresh token (JWT auth).
+            // API key sessions never have a refresh token so 401s propagate as-is.
+            if (response.code == 401 && storedRefreshToken != null && !request.url.encodedPath.endsWith("auth/refresh")) {
                 val newToken = synchronized(refreshLock) {
                     // If another thread already refreshed, reuse the updated token
                     val requestToken = request.header("Authorization")?.removePrefix("Bearer ")
                     if (requestToken == apiToken) {
-                        attemptTokenRefresh()?.also { apiToken = it }
+                        val currentRefreshToken = storedRefreshToken
+                        val refreshResult = currentRefreshToken?.let { attemptTokenRefresh(it) }
+                        if (refreshResult != null) {
+                            apiToken = refreshResult.accessToken
+                            // Store rotated refresh token if the server returned one
+                            if (refreshResult.refreshToken != null) {
+                                storedRefreshToken = refreshResult.refreshToken
+                            }
+                        }
+                        refreshResult?.accessToken
                     } else {
                         apiToken
                     }
@@ -111,7 +121,7 @@ object RetrofitClient {
             .build()
     }
 
-    private fun attemptTokenRefresh(): String? {
+    private fun attemptTokenRefresh(refreshToken: String): RefreshResponse? {
         val url = baseUrl ?: return null
         return try {
             val client = OkHttpClient.Builder()
@@ -120,14 +130,17 @@ object RetrofitClient {
                 .readTimeout(30, TimeUnit.SECONDS)
                 .build()
             val refreshUrl = "${url.trimEnd('/')}/auth/refresh"
+            // Send the refresh token as a header; request tokens back in the body
             val request = Request.Builder()
                 .url(refreshUrl)
-                .post("".toRequestBody())
+                .addHeader("x-refresh-token", refreshToken)
+                .addHeader("x-return-tokens", "true")
+                .post("{}".toRequestBody("application/json".toMediaType()))
                 .build()
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string()
-                gson.fromJson(body, RefreshResponse::class.java)?.accessToken
+                gson.fromJson(body, RefreshResponse::class.java)
             } else {
                 null
             }

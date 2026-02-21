@@ -132,9 +132,9 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         if (!savedHost.isNullOrEmpty() && !savedKey.isNullOrEmpty()) {
             _hostUrl.value = savedHost
             _apiKey.value = savedKey
-            // Restore the auth type so token refresh is only used for JWT sessions
-            val isJwt = securePrefs.getIsJwtAuth()
-            connectWithApiKey(savedHost, savedKey, isJwt)
+            // Restore the refresh token so JWT sessions can auto-refresh on 401
+            val refreshToken = securePrefs.getRefreshToken()
+            connectWithApiKey(savedHost, savedKey, refreshToken)
         } else {
             _uiState.value = UiState.Login
         }
@@ -179,7 +179,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun connectWithApiKey(host: String, key: String, isJwt: Boolean = false) {
+    private fun connectWithApiKey(host: String, key: String, refreshToken: String? = null) {
         viewModelScope.launch {
             _uiState.value = UiState.Loading
             _errorMessage.value = null
@@ -189,7 +189,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 val formattedHost = formatHost(host)
 
                 // Initialize Retrofit
-                RetrofitClient.initialize(formattedHost, key, isJwt)
+                RetrofitClient.initialize(formattedHost, key, refreshToken)
 
                 // Initialize repository after RetrofitClient
                 repository = AudiobookRepository()
@@ -197,7 +197,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Fetch libraries to verify connection
                 val result = repository!!.getLibraries()
                 result.onSuccess { libs ->
-                    onConnectionSuccess(libs, formattedHost, key, isJwt)
+                    onConnectionSuccess(libs, formattedHost, key, refreshToken)
                 }.onFailure { error ->
                     _errorMessage.value = error.message ?: "Connection failed"
                     _uiState.value = UiState.Login
@@ -228,21 +228,20 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {
                     val body = loginResponse.body()!!
 
-                    // Support both new JWT format (accessToken) and old format (user.token)
-                    val token = body.accessToken ?: body.user?.token
+                    // New JWT servers: user.accessToken + user.refreshToken (requires x-return-tokens header)
+                    // Old servers: user.token (non-expiring, no refresh needed)
+                    val token = body.user?.accessToken ?: body.user?.token
+                    val refreshToken = body.user?.refreshToken
 
                     if (token != null) {
-                        // New JWT format uses accessToken; old format uses user.token (non-expiring)
-                        val isJwt = body.accessToken != null
-
-                        // Now initialize with the token
-                        RetrofitClient.initialize(formattedHost, token, isJwt)
+                        // Now initialize with the token and optional refresh token
+                        RetrofitClient.initialize(formattedHost, token, refreshToken)
                         repository = AudiobookRepository()
 
                         // Fetch libraries to verify
                         val result = repository!!.getLibraries()
                         result.onSuccess { libs ->
-                            onConnectionSuccess(libs, formattedHost, token, isJwt)
+                            onConnectionSuccess(libs, formattedHost, token, refreshToken)
                         }.onFailure { error ->
                             _errorMessage.value = error.message ?: "Failed to fetch libraries"
                             _uiState.value = UiState.Login
@@ -274,13 +273,13 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun onConnectionSuccess(libs: List<LibrarySummary>, formattedHost: String, token: String, isJwt: Boolean = false) {
+    private fun onConnectionSuccess(libs: List<LibrarySummary>, formattedHost: String, token: String, refreshToken: String? = null) {
         _libraries.value = libs
 
         // Save credentials
         securePrefs.saveHostUrl(formattedHost)
         securePrefs.saveApiKey(token)
-        securePrefs.saveIsJwtAuth(isJwt)
+        securePrefs.saveRefreshToken(refreshToken)
 
         // Initialize audio manager with preferred playback speed
         audioManager = GlobalAudioManager(
