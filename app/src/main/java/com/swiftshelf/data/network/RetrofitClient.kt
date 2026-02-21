@@ -1,6 +1,6 @@
 package com.swiftshelf.data.network
 
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.swiftshelf.BuildConfig
 import com.swiftshelf.data.model.RefreshResponse
 import okhttp3.Cookie
@@ -21,6 +21,10 @@ object RetrofitClient {
     private var retrofit: Retrofit? = null
     @Volatile private var apiToken: String? = null
     @Volatile private var baseUrl: String? = null
+
+    // Gson instance with HTML escaping disabled so passwords with <, >, &, etc. are
+    // serialized as literal characters rather than \u003c Unicode escapes.
+    private val gson = GsonBuilder().disableHtmlEscaping().create()
 
     // Lock to prevent concurrent token refresh races
     private val refreshLock = Any()
@@ -56,7 +60,6 @@ object RetrofitClient {
             val response = chain.proceed(request)
             // Don't attempt refresh on the refresh endpoint itself (avoid infinite loop)
             if (response.code == 401 && !request.url.encodedPath.endsWith("auth/refresh")) {
-                response.close()
                 val newToken = synchronized(refreshLock) {
                     // If another thread already refreshed, reuse the updated token
                     val requestToken = request.header("Authorization")?.removePrefix("Bearer ")
@@ -67,6 +70,8 @@ object RetrofitClient {
                     }
                 }
                 if (newToken != null) {
+                    // Only close the 401 response once we have a replacement token
+                    response.close()
                     val newRequest = request.newBuilder()
                         .header("Authorization", "Bearer $newToken")
                         .build()
@@ -99,7 +104,7 @@ object RetrofitClient {
         retrofit = Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
     }
 
@@ -119,7 +124,7 @@ object RetrofitClient {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string()
-                Gson().fromJson(body, RefreshResponse::class.java)?.accessToken
+                gson.fromJson(body, RefreshResponse::class.java)?.accessToken
             } else {
                 null
             }
@@ -153,7 +158,7 @@ object RetrofitClient {
         return Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
             .create(AudiobookshelfApi::class.java)
     }
