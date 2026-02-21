@@ -120,8 +120,10 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ### First Launch
 1. Launch SwiftShelf on your Android TV
-2. Enter your Audiobookshelf host URL (e.g., `https://abs.example.com`)
-3. Enter your API key (found in Audiobookshelf settings)
+2. Enter your Audiobookshelf host URL — **include the full base path** if ABS is not served at the root:
+   - Root install: `https://abs.example.com`
+   - Subpath install: `https://myserver.com/audiobookshelf`
+3. Choose your authentication method (API Key or Username / Password) and enter your credentials
 4. Select one or more libraries to browse
 
 ### Debug Configuration (Development)
@@ -189,6 +191,58 @@ app/src/main/java/com/swiftshelf/
 - [ ] Bookmarks
 - [ ] Android Auto integration
 - [ ] Cast support
+
+## Debugging with ADB
+
+Debug builds emit verbose HTTP logs (request lines, headers, and full response bodies) using the tags `SwiftShelf` and `SwiftShelf/HTTP`. Use `adb logcat` to capture these while reproducing an issue.
+
+### Quick-start
+
+```bash
+# Clear the log buffer, then stream only SwiftShelf lines
+adb logcat -c && adb logcat -s SwiftShelf:D SwiftShelf/HTTP:D
+
+# If the device is connected over TCP/IP (common for Android TV)
+adb connect <tv-ip>:5555
+adb -s <tv-ip>:5555 logcat -c && adb -s <tv-ip>:5555 logcat -s SwiftShelf:D SwiftShelf/HTTP:D
+```
+
+### What to look for
+
+| Log tag | What it shows |
+|---|---|
+| `RetrofitClient` | Base URL and token length when Retrofit is initialized |
+| `SwiftShelf` | Auth flow steps: URL being used, token lengths, response codes |
+| `SwiftShelf/HTTP` | Full HTTP request/response — URL, headers, and body |
+
+### Diagnosing a 401
+
+1. Run logcat before tapping **Connect**.
+2. Look for the `RetrofitClient` line — verify `url=` ends with `/` and `tokenLen=` matches your key length.
+3. Look for the `SwiftShelf/HTTP` `GET /api/libraries` request — confirm the `Authorization: Bearer` header is present and the URL path is correct.
+4. Look for the response body of the 401 — the server usually includes an error message that explains what went wrong (e.g. `"Token not found"`, `"Invalid token"`, `"Unauthorized"`).
+
+### Entering credentials via ADB
+
+When using `adb shell input text` to type into the app, be aware that:
+
+- **Use single outer quotes**: `adb shell 'input text "YOUR_VALUE"'` is the most reliable form. The outer single quotes prevent the local shell from interpreting special characters before they reach ADB; the inner double quotes preserve spaces within the value.
+  ```bash
+  adb shell 'input text "YOUR_API_KEY_HERE"'
+  ```
+- **Forms that truncate unexpectedly**: `adb shell "input text '$api_key'"` and `adb shell input text '$api_key'` both silently truncate long strings due to shell escaping / argument-splitting before ADB receives the text. Avoid them.
+- **Newlines**: pressing Enter via ADB (`adb shell input keyevent 66`) submits the form — do this only after all fields are filled.
+- **API key whitespace**: the app automatically trims leading/trailing whitespace from host URL, API key, and username fields, so accidental extra spaces from ADB input are stripped.
+
+### Filtering noise
+
+```bash
+# Show only connection-related lines (hide verbose HTTP body lines)
+adb logcat -s SwiftShelf:D
+
+# Show everything including full HTTP body
+adb logcat -s SwiftShelf:D SwiftShelf/HTTP:V
+```
 
 ## Contributing
 

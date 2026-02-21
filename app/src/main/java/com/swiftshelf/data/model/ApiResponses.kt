@@ -55,12 +55,20 @@ data class LoginRequest(
 )
 
 data class LoginResponse(
-    val user: LoginUser,
+    val user: LoginUser?,
     val userDefaultLibraryId: String?
 )
 
 data class LoginUser(
     val id: String,
     val username: String,
-    val token: String
+    val token: String?,         // Old non-expiring token (legacy servers)
+    val accessToken: String?,   // JWT access token (new servers)
+    val refreshToken: String?   // JWT refresh token (new servers — sent as cookie; may also appear in body)
+)
+
+// JWT refresh response — access token in body; refresh token rotation handled via cookie
+data class RefreshResponse(
+    val accessToken: String,
+    val refreshToken: String?
 )

@@ -6,11 +6,20 @@ import retrofit2.http.*
 
 interface AudiobookshelfApi {
 
-    // Login (no auth required)
+    // Login (no auth required).
+    // Access token returned in body; refresh token set as an HTTP-only cookie.
     @POST("login")
     suspend fun login(
         @Body request: LoginRequest
     ): Response<LoginResponse>
+
+    // JWT token refresh
+    @POST("auth/refresh")
+    suspend fun refreshToken(): Response<RefreshResponse>
+
+    // Logout — invalidates the server-side refresh token session
+    @POST("logout")
+    suspend fun logout(): Response<Unit>
 
     @GET("api/libraries")
     suspend fun getLibraries(): Response<LibraryResponse>

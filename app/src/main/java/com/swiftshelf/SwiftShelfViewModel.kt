@@ -132,8 +132,9 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         if (!savedHost.isNullOrEmpty() && !savedKey.isNullOrEmpty()) {
             _hostUrl.value = savedHost
             _apiKey.value = savedKey
-            // Use saved API key directly (it could be an API key or a token from username/password login)
-            connectWithApiKey(savedHost, savedKey)
+            // Restore the JWT session flag so 401 refresh is attempted for JWT sessions
+            val isJwt = securePrefs.getIsJwtAuth()
+            connectWithApiKey(savedHost, savedKey, isJwt)
         } else {
             _uiState.value = UiState.Login
         }
@@ -152,18 +153,19 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun updateHostUrl(url: String) {
-        _hostUrl.value = url
+        _hostUrl.value = url.trim()
     }
 
     fun updateApiKey(key: String) {
-        _apiKey.value = key
+        _apiKey.value = key.trim()
     }
 
     fun updateUsername(value: String) {
-        _username.value = value
+        _username.value = value.trim()
     }
 
     fun updatePassword(value: String) {
+        // Passwords are NOT trimmed — leading/trailing spaces may be intentional
         _password.value = value
     }
 
@@ -178,17 +180,25 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun connectWithApiKey(host: String, key: String) {
+    private fun connectWithApiKey(host: String, key: String, isJwt: Boolean = false) {
         viewModelScope.launch {
             _uiState.value = UiState.Loading
             _errorMessage.value = null
 
             try {
-                // Ensure URL has protocol
+                // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
+                Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost")
+                // Log raw key from the input field so we can compare against what the
+                // Authorization header uses. Shows length + first/last 4 chars.
+                val keyPreview = if (key.length > 8) "${key.take(4)}…${key.takeLast(4)}" else "(short)"
+                Log.d("SwiftShelf", "connectWithApiKey: rawKey len=${key.length} preview=$keyPreview")
 
-                // Initialize Retrofit
-                RetrofitClient.initialize(formattedHost, key)
+                // Initialize Retrofit, persisting any refreshed access token automatically
+                RetrofitClient.initialize(formattedHost, key, canAttemptRefresh = isJwt) { newAccess ->
+                    Log.d("SwiftShelf", "Token refreshed — persisting new access token")
+                    securePrefs.saveApiKey(newAccess)
+                }
 
                 // Initialize repository after RetrofitClient
                 repository = AudiobookRepository()
@@ -196,12 +206,15 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Fetch libraries to verify connection
                 val result = repository!!.getLibraries()
                 result.onSuccess { libs ->
-                    onConnectionSuccess(libs, formattedHost, key)
+                    Log.d("SwiftShelf", "connectWithApiKey: success, ${libs.size} libraries")
+                    onConnectionSuccess(libs, formattedHost, key, isJwt)
                 }.onFailure { error ->
+                    Log.w("SwiftShelf", "connectWithApiKey: failed - ${error.message}")
                     _errorMessage.value = error.message ?: "Connection failed"
                     _uiState.value = UiState.Login
                 }
             } catch (e: Exception) {
+                Log.e("SwiftShelf", "connectWithApiKey: exception - ${e.message}", e)
                 _errorMessage.value = e.message ?: "Unknown error"
                 _uiState.value = UiState.Login
             }
@@ -214,33 +227,60 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
             _errorMessage.value = null
 
             try {
-                // Ensure URL has protocol
+                // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
+                Log.d("SwiftShelf", "connectWithUsernamePassword: url=$formattedHost")
+
+                // Clear stale cookies before login so a previous session's refresh token
+                // cookie can't interfere with the fresh credential check.
+                RetrofitClient.clearCookies()
 
                 // Create unauthenticated API for login
                 val unauthApi = RetrofitClient.createUnauthenticatedApi(formattedHost)
 
-                // Attempt login
+                // GsonConverterFactory with disableHtmlEscaping() sends password characters
+                // like %, &, # etc. as-is inside the JSON string — no URL encoding occurs.
+                Log.d("SwiftShelf", "connectWithUsernamePassword: pwdLen=${password.length}")
                 val loginRequest = LoginRequest(username = username, password = password)
                 val loginResponse = unauthApi.login(loginRequest)
+                Log.d("SwiftShelf", "connectWithUsernamePassword: login response code=${loginResponse.code()}")
 
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {
-                    val token = loginResponse.body()!!.user.token
+                    val body = loginResponse.body()!!
 
-                    // Now initialize with the token
-                    RetrofitClient.initialize(formattedHost, token)
-                    repository = AudiobookRepository()
+                    // New JWT servers: user.accessToken (short-lived, refresh via cookie on 401)
+                    // Old servers: user.token (non-expiring, no refresh needed)
+                    val token = body.user?.accessToken ?: body.user?.token
+                    val isJwt = body.user?.accessToken != null
+                    Log.d("SwiftShelf", "connectWithUsernamePassword: isJwt=$isJwt tokenLen=${token?.length}")
 
-                    // Fetch libraries to verify
-                    val result = repository!!.getLibraries()
-                    result.onSuccess { libs ->
-                        onConnectionSuccess(libs, formattedHost, token)
-                    }.onFailure { error ->
-                        _errorMessage.value = error.message ?: "Failed to fetch libraries"
+                    if (token != null) {
+                        // Initialize with the access token; for JWT sessions the refresh token
+                        // lives as an HTTP-only cookie and is sent automatically by the cookie jar.
+                        RetrofitClient.initialize(formattedHost, token, canAttemptRefresh = isJwt) { newAccess ->
+                            Log.d("SwiftShelf", "Token refreshed — persisting new access token")
+                            securePrefs.saveApiKey(newAccess)
+                        }
+                        repository = AudiobookRepository()
+
+                        // Fetch libraries to verify
+                        val result = repository!!.getLibraries()
+                        result.onSuccess { libs ->
+                            Log.d("SwiftShelf", "connectWithUsernamePassword: success, ${libs.size} libraries")
+                            onConnectionSuccess(libs, formattedHost, token, isJwt)
+                        }.onFailure { error ->
+                            Log.w("SwiftShelf", "connectWithUsernamePassword: libraries failed - ${error.message}")
+                            _errorMessage.value = error.message ?: "Failed to fetch libraries"
+                            _uiState.value = UiState.Login
+                        }
+                    } else {
+                        Log.w("SwiftShelf", "connectWithUsernamePassword: no token in response body=${body}")
+                        _errorMessage.value = "Invalid login response"
                         _uiState.value = UiState.Login
                     }
                 } else {
                     val errorBody = loginResponse.errorBody()?.string()
+                    Log.w("SwiftShelf", "connectWithUsernamePassword: login failed code=${loginResponse.code()} error=$errorBody")
                     _errorMessage.value = when (loginResponse.code()) {
                         401 -> "Invalid username or password"
                         else -> "Login failed: ${loginResponse.code()}"
@@ -248,6 +288,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                     _uiState.value = UiState.Login
                 }
             } catch (e: Exception) {
+                Log.e("SwiftShelf", "connectWithUsernamePassword: exception - ${e.message}", e)
                 _errorMessage.value = e.message ?: "Unknown error"
                 _uiState.value = UiState.Login
             }
@@ -255,19 +296,20 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun formatHost(host: String): String {
-        return if (!host.startsWith("http")) {
-            "https://$host"
-        } else {
-            host
-        }
+        // Trim whitespace, ensure protocol prefix and trailing slash for correct
+        // Retrofit URL resolution (e.g. https://server.com/abs/ not https://server.com/abs)
+        val trimmed = host.trim()
+        val withProtocol = if (!trimmed.startsWith("http")) "https://$trimmed" else trimmed
+        return if (withProtocol.endsWith("/")) withProtocol else "$withProtocol/"
     }
 
-    private fun onConnectionSuccess(libs: List<LibrarySummary>, formattedHost: String, token: String) {
+    private fun onConnectionSuccess(libs: List<LibrarySummary>, formattedHost: String, token: String, isJwt: Boolean = false) {
         _libraries.value = libs
 
         // Save credentials
         securePrefs.saveHostUrl(formattedHost)
         securePrefs.saveApiKey(token)
+        securePrefs.saveIsJwtAuth(isJwt)
 
         // Initialize audio manager with preferred playback speed
         audioManager = GlobalAudioManager(
@@ -548,10 +590,30 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun logout() {
+        // For JWT sessions, notify the server to invalidate the refresh token cookie.
+        // Capture the API reference now (before local state is cleared) so the
+        // coroutine always uses the current session's authenticated client.
+        val hasJwtSession = securePrefs.getIsJwtAuth()
+        val apiForLogout = if (hasJwtSession && RetrofitClient.isInitialized()) {
+            RetrofitClient.getApi()
+        } else null
+
+        if (apiForLogout != null) {
+            viewModelScope.launch {
+                try {
+                    apiForLogout.logout()
+                    Log.d("SwiftShelf", "logout: server session invalidated")
+                } catch (e: Exception) {
+                    Log.w("SwiftShelf", "logout: server logout failed (ignored) - ${e.message}")
+                }
+            }
+        }
+
         audioManager?.release()
         audioManager = null
         repository = null  // Clear repository so it gets recreated with new token on next login
         securePrefs.clear()
+        RetrofitClient.clearCookies()  // Remove refresh token and any other session cookies
         _uiState.value = UiState.Login
         _selectedLibraryIds.value = emptySet()
         _libraries.value = emptyList()

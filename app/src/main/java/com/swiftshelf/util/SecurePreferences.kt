@@ -81,6 +81,14 @@ class SecurePreferences(context: Context) {
         return sharedPreferences.getString(KEY_CURRENT_LIBRARY_ID, null)
     }
 
+    fun saveIsJwtAuth(isJwt: Boolean) {
+        sharedPreferences.edit().putBoolean(KEY_IS_JWT_AUTH, isJwt).apply()
+    }
+
+    fun getIsJwtAuth(): Boolean {
+        return sharedPreferences.getBoolean(KEY_IS_JWT_AUTH, false)
+    }
+
     fun clear() {
         sharedPreferences.edit().clear().apply()
     }
@@ -98,6 +106,7 @@ class SecurePreferences(context: Context) {
         private const val KEY_PROGRESS_COLOR = "progress_bar_color"
         private const val KEY_PLAYBACK_SPEED = "playback_speed"
         private const val KEY_CURRENT_LIBRARY_ID = "current_library_id"
+        private const val KEY_IS_JWT_AUTH = "is_jwt_auth"
 
         private const val DEFAULT_ITEM_LIMIT = 10
         private const val DEFAULT_PROGRESS_COLOR = "Yellow"
