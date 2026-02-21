@@ -2,6 +2,7 @@ package com.swiftshelf.data.network
 
 import com.google.gson.GsonBuilder
 import com.swiftshelf.BuildConfig
+import com.swiftshelf.data.model.LoginRequest
 import com.swiftshelf.data.model.RefreshResponse
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -10,6 +11,7 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -31,10 +33,10 @@ object RetrofitClient {
     // Lock to prevent concurrent token refresh races
     private val refreshLock = Any()
 
-    // Shared cookie jar for all clients so refresh token cookies are preserved
+    // Shared cookie jar for all clients so refresh token cookies are preserved.
+    // cookieStore is at singleton scope so clearCookies() can reach it.
+    private val cookieStore = ConcurrentHashMap<String, List<Cookie>>()
     private val cookieJar = object : CookieJar {
-        private val cookieStore = ConcurrentHashMap<String, List<Cookie>>()
-
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
             cookieStore[url.host] = cookies
         }
@@ -42,6 +44,29 @@ object RetrofitClient {
         override fun loadForRequest(url: HttpUrl): List<Cookie> {
             return cookieStore[url.host] ?: emptyList()
         }
+    }
+
+    /**
+     * Clears all stored cookies (call before a fresh login and on logout).
+     * Prevents stale session cookies from being sent with new requests.
+     */
+    fun clearCookies() {
+        cookieStore.clear()
+    }
+
+    /**
+     * Serialize a login credential pair to a [RequestBody] with exactly
+     * `Content-Type: application/json` (no `; charset=UTF-8`).
+     *
+     * GsonConverterFactory appends `; charset=UTF-8` which some server-side
+     * middleware (reverse proxies, WAFs) can misinterpret — in particular,
+     * treating the body as percent-encoded form data and URL-decoding `%`
+     * sequences found in passwords before ABS receives the credentials.
+     * Curl omits the charset and works correctly; this matches that behaviour.
+     */
+    fun toLoginBody(username: String, password: String): RequestBody {
+        val json = gson.toJson(LoginRequest(username = username, password = password))
+        return json.toRequestBody("application/json".toMediaType())
     }
 
     fun initialize(baseUrl: String, token: String, canAttemptRefresh: Boolean = false,

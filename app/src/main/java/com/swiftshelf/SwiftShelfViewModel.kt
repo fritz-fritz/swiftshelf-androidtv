@@ -231,12 +231,18 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 val formattedHost = formatHost(host)
                 Log.d("SwiftShelf", "connectWithUsernamePassword: url=$formattedHost")
 
+                // Clear stale cookies before login so a previous session's refresh token
+                // cookie can't interfere with the fresh credential check.
+                RetrofitClient.clearCookies()
+
                 // Create unauthenticated API for login
                 val unauthApi = RetrofitClient.createUnauthenticatedApi(formattedHost)
 
-                // Attempt login
-                val loginRequest = LoginRequest(username = username, password = password)
-                val loginResponse = unauthApi.login(loginRequest)
+                // Build the login body manually so Content-Type is application/json
+                // without charset=UTF-8. Some middleware misinterprets the charset
+                // parameter and URL-decodes % sequences in passwords before ABS sees them.
+                val loginBody = RetrofitClient.toLoginBody(username, password)
+                val loginResponse = unauthApi.login(loginBody)
                 Log.d("SwiftShelf", "connectWithUsernamePassword: login response code=${loginResponse.code()}")
 
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {
@@ -607,6 +613,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
         audioManager = null
         repository = null  // Clear repository so it gets recreated with new token on next login
         securePrefs.clear()
+        RetrofitClient.clearCookies()  // Remove refresh token and any other session cookies
         _uiState.value = UiState.Login
         _selectedLibraryIds.value = emptySet()
         _libraries.value = emptyList()
