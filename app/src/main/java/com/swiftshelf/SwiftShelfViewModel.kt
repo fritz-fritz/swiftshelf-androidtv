@@ -189,6 +189,10 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
                 Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost hasRefresh=${refreshToken != null}")
+                // Log raw key from the input field so we can compare against what the
+                // Authorization header uses. Shows length + first/last 4 chars.
+                val keyPreview = if (key.length > 8) "${key.take(4)}…${key.takeLast(4)}" else "(short)"
+                Log.d("SwiftShelf", "connectWithApiKey: rawKey len=${key.length} preview=$keyPreview")
 
                 // Initialize Retrofit, persisting any rotated JWT tokens automatically
                 RetrofitClient.initialize(formattedHost, key, refreshToken) { newAccess, newRefresh ->

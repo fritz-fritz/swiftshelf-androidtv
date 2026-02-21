@@ -111,16 +111,11 @@ fun LoginScreen(
                             label = { Text(stringResource(R.string.api_key)) },
                             placeholder = { Text("Your API Key") },
                             singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            // No PasswordVisualTransformation — show the key in plaintext so
+                            // the user can verify exactly what was entered / typed via ADB.
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(
-                                // KeyboardType.Uri maps to TYPE_TEXT_VARIATION_URI: disables
-                                // autocorrect, spell-check, suggestions, and microphone.
-                                // It also has no IME-imposed character length limits, unlike
-                                // KeyboardType.Text or KeyboardType.Password which truncate
-                                // long API keys on Android TV keyboards.
-                                // PasswordVisualTransformation still shows dots visually.
-                                keyboardType = KeyboardType.Uri,
+                                keyboardType = KeyboardType.Password,
                                 imeAction = ImeAction.Done
                             ),
                             keyboardActions = KeyboardActions(
