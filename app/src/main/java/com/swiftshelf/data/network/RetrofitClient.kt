@@ -21,6 +21,7 @@ object RetrofitClient {
     private var retrofit: Retrofit? = null
     @Volatile private var apiToken: String? = null
     @Volatile private var baseUrl: String? = null
+    @Volatile private var isJwtAuth: Boolean = false
 
     // Gson instance with HTML escaping disabled so passwords with <, >, &, etc. are
     // serialized as literal characters rather than \u003c Unicode escapes.
@@ -42,9 +43,10 @@ object RetrofitClient {
         }
     }
 
-    fun initialize(baseUrl: String, token: String) {
+    fun initialize(baseUrl: String, token: String, isJwt: Boolean = false) {
         this.baseUrl = baseUrl
         apiToken = token
+        isJwtAuth = isJwt
 
         val authInterceptor = Interceptor { chain ->
             val original = chain.request()
@@ -58,8 +60,9 @@ object RetrofitClient {
         val tokenRefreshInterceptor = Interceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
-            // Don't attempt refresh on the refresh endpoint itself (avoid infinite loop)
-            if (response.code == 401 && !request.url.encodedPath.endsWith("auth/refresh")) {
+            // Don't attempt refresh on the refresh endpoint itself (avoid infinite loop).
+            // Only attempt refresh for JWT auth — API keys have no refresh token.
+            if (response.code == 401 && isJwtAuth && !request.url.encodedPath.endsWith("auth/refresh")) {
                 val newToken = synchronized(refreshLock) {
                     // If another thread already refreshed, reuse the updated token
                     val requestToken = request.header("Authorization")?.removePrefix("Bearer ")
