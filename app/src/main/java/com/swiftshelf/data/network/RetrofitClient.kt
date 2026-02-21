@@ -2,7 +2,6 @@ package com.swiftshelf.data.network
 
 import com.google.gson.GsonBuilder
 import com.swiftshelf.BuildConfig
-import com.swiftshelf.data.model.LoginRequest
 import com.swiftshelf.data.model.RefreshResponse
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -11,7 +10,6 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -52,21 +50,6 @@ object RetrofitClient {
      */
     fun clearCookies() {
         cookieStore.clear()
-    }
-
-    /**
-     * Serialize a login credential pair to a [RequestBody] with exactly
-     * `Content-Type: application/json` (no `; charset=UTF-8`).
-     *
-     * GsonConverterFactory appends `; charset=UTF-8` which some server-side
-     * middleware (reverse proxies, WAFs) can misinterpret — in particular,
-     * treating the body as percent-encoded form data and URL-decoding `%`
-     * sequences found in passwords before ABS receives the credentials.
-     * Curl omits the charset and works correctly; this matches that behaviour.
-     */
-    fun toLoginBody(username: String, password: String): RequestBody {
-        val json = gson.toJson(LoginRequest(username = username, password = password))
-        return json.toRequestBody("application/json".toMediaType())
     }
 
     fun initialize(baseUrl: String, token: String, canAttemptRefresh: Boolean = false,
@@ -126,6 +109,7 @@ object RetrofitClient {
             android.util.Log.d("SwiftShelf/HTTP", message)
         }.apply {
             level = loggingLevel
+            redactHeader("Authorization")
             android.util.Log.d("RetrofitClient", "Initializing: url=$baseUrl tokenLen=${token.length}")
         }
 
@@ -183,9 +167,20 @@ object RetrofitClient {
             HttpLoggingInterceptor.Level.NONE
         }
         val loggingInterceptor = HttpLoggingInterceptor { message ->
-            android.util.Log.d("SwiftShelf/HTTP", message)
+            // Redact password values in logged JSON bodies.
+            // Uses a non-greedy match to avoid issues with adjacent JSON fields.
+            // Note: does not handle passwords containing literal backslash sequences;
+            // those cases are uncommon and do not affect server-side authentication.
+            val sanitized = message.replace(
+                Regex(""""password"\s*:\s*".*?""""),
+                """"password":"[REDACTED]""""
+            )
+            android.util.Log.d("SwiftShelf/HTTP", sanitized)
         }.apply {
             level = loggingLevel
+            // Redact refresh token cookies from logs
+            redactHeader("Cookie")
+            redactHeader("Set-Cookie")
         }
 
         val client = OkHttpClient.Builder()

@@ -188,7 +188,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
-                Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost isJwt=$isJwt")
+                Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost")
                 // Log raw key from the input field so we can compare against what the
                 // Authorization header uses. Shows length + first/last 4 chars.
                 val keyPreview = if (key.length > 8) "${key.take(4)}…${key.takeLast(4)}" else "(short)"
@@ -238,11 +238,11 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Create unauthenticated API for login
                 val unauthApi = RetrofitClient.createUnauthenticatedApi(formattedHost)
 
-                // Build the login body manually so Content-Type is application/json
-                // without charset=UTF-8. Some middleware misinterprets the charset
-                // parameter and URL-decodes % sequences in passwords before ABS sees them.
-                val loginBody = RetrofitClient.toLoginBody(username, password)
-                val loginResponse = unauthApi.login(loginBody)
+                // GsonConverterFactory with disableHtmlEscaping() sends password characters
+                // like %, &, # etc. as-is inside the JSON string — no URL encoding occurs.
+                Log.d("SwiftShelf", "connectWithUsernamePassword: pwdLen=${password.length}")
+                val loginRequest = LoginRequest(username = username, password = password)
+                val loginResponse = unauthApi.login(loginRequest)
                 Log.d("SwiftShelf", "connectWithUsernamePassword: login response code=${loginResponse.code()}")
 
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {

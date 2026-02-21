@@ -1,18 +1,16 @@
 package com.swiftshelf.data.network
 
 import com.swiftshelf.data.model.*
-import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.*
 
 interface AudiobookshelfApi {
 
     // Login (no auth required).
-    // Takes a pre-built RequestBody so Content-Type: application/json is sent without
-    // the `; charset=UTF-8` suffix that GsonConverterFactory appends — matching curl.
+    // Access token returned in body; refresh token set as an HTTP-only cookie.
     @POST("login")
     suspend fun login(
-        @Body request: RequestBody
+        @Body request: LoginRequest
     ): Response<LoginResponse>
 
     // JWT token refresh
