@@ -111,8 +111,7 @@ fun LoginScreen(
                             label = { Text(stringResource(R.string.api_key)) },
                             placeholder = { Text("Your API Key") },
                             singleLine = true,
-                            // No PasswordVisualTransformation — show the key in plaintext so
-                            // the user can verify exactly what was entered / typed via ADB.
+                            visualTransformation = PasswordVisualTransformation(),
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Password,

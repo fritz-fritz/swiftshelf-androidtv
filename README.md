@@ -224,7 +224,11 @@ adb -s <tv-ip>:5555 logcat -c && adb -s <tv-ip>:5555 logcat -s SwiftShelf:D Swif
 
 When using `adb shell input text` to type into the app, be aware that:
 
-- **Spaces and special characters must be escaped**: wrap the value in quotes via the shell command: `adb shell "input text 'mypassword'"`. For a password with single quotes, use `adb shell input text "myp%sassword"` where `%s` represents a literal space.
+- **Use single outer quotes**: `adb shell 'input text "YOUR_VALUE"'` is the most reliable form. The outer single quotes prevent the local shell from interpreting special characters before they reach ADB; the inner double quotes preserve spaces within the value.
+  ```bash
+  adb shell 'input text "YOUR_API_KEY_HERE"'
+  ```
+- **Forms that truncate unexpectedly**: `adb shell "input text '$api_key'"` and `adb shell input text '$api_key'` both silently truncate long strings due to shell escaping / argument-splitting before ADB receives the text. Avoid them.
 - **Newlines**: pressing Enter via ADB (`adb shell input keyevent 66`) submits the form — do this only after all fields are filled.
 - **API key whitespace**: the app automatically trims leading/trailing whitespace from host URL, API key, and username fields, so accidental extra spaces from ADB input are stripped.
 
