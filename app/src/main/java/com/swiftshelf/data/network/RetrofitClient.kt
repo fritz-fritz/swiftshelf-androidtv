@@ -22,7 +22,7 @@ object RetrofitClient {
     private var retrofit: Retrofit? = null
     @Volatile private var apiToken: String? = null
     @Volatile private var baseUrl: String? = null
-    @Volatile private var storedRefreshToken: String? = null
+    @Volatile private var canAttemptRefresh: Boolean = false
 
     // Gson instance with HTML escaping disabled so passwords with <, >, &, etc. are
     // serialized as literal characters rather than \u003c Unicode escapes.
@@ -44,11 +44,11 @@ object RetrofitClient {
         }
     }
 
-    fun initialize(baseUrl: String, token: String, refreshToken: String? = null,
-                   onTokensRefreshed: ((accessToken: String, refreshToken: String?) -> Unit)? = null) {
+    fun initialize(baseUrl: String, token: String, canAttemptRefresh: Boolean = false,
+                   onTokenRefreshed: ((accessToken: String) -> Unit)? = null) {
         this.baseUrl = baseUrl
         apiToken = token
-        storedRefreshToken = refreshToken
+        this.canAttemptRefresh = canAttemptRefresh
 
         val authInterceptor = Interceptor { chain ->
             val original = chain.request()
@@ -62,26 +62,18 @@ object RetrofitClient {
         val tokenRefreshInterceptor = Interceptor { chain ->
             val request = chain.request()
             val response = chain.proceed(request)
-            // Only attempt refresh when we have a refresh token (JWT auth).
-            // API key sessions never have a refresh token so 401s propagate as-is.
-            if (response.code == 401 && storedRefreshToken != null && !request.url.encodedPath.endsWith("auth/refresh")) {
+            // Only attempt refresh for JWT sessions (cookie-based).
+            // API key sessions have no refresh cookie so 401s propagate as-is.
+            if (response.code == 401 && canAttemptRefresh && !request.url.encodedPath.endsWith("auth/refresh")) {
                 val newToken = synchronized(refreshLock) {
                     // If another thread already refreshed, reuse the updated token
                     val requestToken = request.header("Authorization")?.removePrefix("Bearer ")
                     if (requestToken == apiToken) {
-                        val currentRefreshToken = storedRefreshToken
-                        val refreshResult = currentRefreshToken?.let { attemptTokenRefresh(it) }
+                        val refreshResult = attemptTokenRefresh()
                         if (refreshResult != null) {
                             apiToken = refreshResult.accessToken
-                            // Store rotated refresh token if the server returned one
-                            if (refreshResult.refreshToken != null) {
-                                storedRefreshToken = refreshResult.refreshToken
-                            }
-                            // Notify the caller so tokens can be persisted
-                            onTokensRefreshed?.invoke(
-                                refreshResult.accessToken,
-                                refreshResult.refreshToken ?: storedRefreshToken
-                            )
+                            // Notify caller so the new access token can be persisted
+                            onTokenRefreshed?.invoke(refreshResult.accessToken)
                         }
                         refreshResult?.accessToken
                     } else {
@@ -129,7 +121,7 @@ object RetrofitClient {
             .build()
     }
 
-    private fun attemptTokenRefresh(refreshToken: String): RefreshResponse? {
+    private fun attemptTokenRefresh(): RefreshResponse? {
         val url = baseUrl ?: return null
         return try {
             val client = OkHttpClient.Builder()
@@ -138,11 +130,9 @@ object RetrofitClient {
                 .readTimeout(30, TimeUnit.SECONDS)
                 .build()
             val refreshUrl = "${url.trimEnd('/')}/auth/refresh"
-            // Send the refresh token as a header; request tokens back in the body
+            // The refresh token cookie is sent automatically by the shared cookie jar.
             val request = Request.Builder()
                 .url(refreshUrl)
-                .addHeader("x-refresh-token", refreshToken)
-                .addHeader("x-return-tokens", "true")
                 .post("{}".toRequestBody("application/json".toMediaType()))
                 .build()
             val response = client.newCall(request).execute()

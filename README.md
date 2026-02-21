@@ -120,8 +120,10 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ### First Launch
 1. Launch SwiftShelf on your Android TV
-2. Enter your Audiobookshelf host URL (e.g., `https://abs.example.com`)
-3. Enter your API key (found in Audiobookshelf settings)
+2. Enter your Audiobookshelf host URL — **include the full base path** if ABS is not served at the root:
+   - Root install: `https://abs.example.com`
+   - Subpath install: `https://myserver.com/audiobookshelf`
+3. Choose your authentication method (API Key or Username / Password) and enter your credentials
 4. Select one or more libraries to browse
 
 ### Debug Configuration (Development)

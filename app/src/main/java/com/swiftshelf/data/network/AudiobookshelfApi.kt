@@ -6,8 +6,8 @@ import retrofit2.http.*
 
 interface AudiobookshelfApi {
 
-    // Login (no auth required). x-return-tokens requests JWT tokens in the response body.
-    @Headers("x-return-tokens: true")
+    // Login (no auth required).
+    // Access token is returned in the response body; refresh token is set as an HTTP-only cookie.
     @POST("login")
     suspend fun login(
         @Body request: LoginRequest
