@@ -153,18 +153,19 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun updateHostUrl(url: String) {
-        _hostUrl.value = url
+        _hostUrl.value = url.trim()
     }
 
     fun updateApiKey(key: String) {
-        _apiKey.value = key
+        _apiKey.value = key.trim()
     }
 
     fun updateUsername(value: String) {
-        _username.value = value
+        _username.value = value.trim()
     }
 
     fun updatePassword(value: String) {
+        // Passwords are NOT trimmed — leading/trailing spaces may be intentional
         _password.value = value
     }
 
@@ -185,8 +186,9 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
             _errorMessage.value = null
 
             try {
-                // Ensure URL has protocol
+                // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
+                Log.d("SwiftShelf", "connectWithApiKey: url=$formattedHost hasRefresh=${refreshToken != null}")
 
                 // Initialize Retrofit
                 RetrofitClient.initialize(formattedHost, key, refreshToken)
@@ -197,12 +199,15 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Fetch libraries to verify connection
                 val result = repository!!.getLibraries()
                 result.onSuccess { libs ->
+                    Log.d("SwiftShelf", "connectWithApiKey: success, ${libs.size} libraries")
                     onConnectionSuccess(libs, formattedHost, key, refreshToken)
                 }.onFailure { error ->
+                    Log.w("SwiftShelf", "connectWithApiKey: failed - ${error.message}")
                     _errorMessage.value = error.message ?: "Connection failed"
                     _uiState.value = UiState.Login
                 }
             } catch (e: Exception) {
+                Log.e("SwiftShelf", "connectWithApiKey: exception - ${e.message}", e)
                 _errorMessage.value = e.message ?: "Unknown error"
                 _uiState.value = UiState.Login
             }
@@ -215,8 +220,9 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
             _errorMessage.value = null
 
             try {
-                // Ensure URL has protocol
+                // Ensure URL has protocol and trailing slash
                 val formattedHost = formatHost(host)
+                Log.d("SwiftShelf", "connectWithUsernamePassword: url=$formattedHost")
 
                 // Create unauthenticated API for login
                 val unauthApi = RetrofitClient.createUnauthenticatedApi(formattedHost)
@@ -224,6 +230,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                 // Attempt login
                 val loginRequest = LoginRequest(username = username, password = password)
                 val loginResponse = unauthApi.login(loginRequest)
+                Log.d("SwiftShelf", "connectWithUsernamePassword: login response code=${loginResponse.code()}")
 
                 if (loginResponse.isSuccessful && loginResponse.body() != null) {
                     val body = loginResponse.body()!!
@@ -232,6 +239,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                     // Old servers: user.token (non-expiring, no refresh needed)
                     val token = body.user?.accessToken ?: body.user?.token
                     val refreshToken = body.user?.refreshToken
+                    Log.d("SwiftShelf", "connectWithUsernamePassword: gotJwt=${body.user?.accessToken != null} hasRefresh=${refreshToken != null} tokenLen=${token?.length}")
 
                     if (token != null) {
                         // Now initialize with the token and optional refresh token
@@ -241,17 +249,21 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                         // Fetch libraries to verify
                         val result = repository!!.getLibraries()
                         result.onSuccess { libs ->
+                            Log.d("SwiftShelf", "connectWithUsernamePassword: success, ${libs.size} libraries")
                             onConnectionSuccess(libs, formattedHost, token, refreshToken)
                         }.onFailure { error ->
+                            Log.w("SwiftShelf", "connectWithUsernamePassword: libraries failed - ${error.message}")
                             _errorMessage.value = error.message ?: "Failed to fetch libraries"
                             _uiState.value = UiState.Login
                         }
                     } else {
+                        Log.w("SwiftShelf", "connectWithUsernamePassword: no token in response body=${body}")
                         _errorMessage.value = "Invalid login response"
                         _uiState.value = UiState.Login
                     }
                 } else {
                     val errorBody = loginResponse.errorBody()?.string()
+                    Log.w("SwiftShelf", "connectWithUsernamePassword: login failed code=${loginResponse.code()} error=$errorBody")
                     _errorMessage.value = when (loginResponse.code()) {
                         401 -> "Invalid username or password"
                         else -> "Login failed: ${loginResponse.code()}"
@@ -259,6 +271,7 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
                     _uiState.value = UiState.Login
                 }
             } catch (e: Exception) {
+                Log.e("SwiftShelf", "connectWithUsernamePassword: exception - ${e.message}", e)
                 _errorMessage.value = e.message ?: "Unknown error"
                 _uiState.value = UiState.Login
             }
@@ -266,11 +279,11 @@ class SwiftShelfViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun formatHost(host: String): String {
-        return if (!host.startsWith("http")) {
-            "https://$host"
-        } else {
-            host
-        }
+        // Trim whitespace, ensure protocol prefix and trailing slash for correct
+        // Retrofit URL resolution (e.g. https://server.com/abs/ not https://server.com/abs)
+        val trimmed = host.trim()
+        val withProtocol = if (!trimmed.startsWith("http")) "https://$trimmed" else trimmed
+        return if (withProtocol.endsWith("/")) withProtocol else "$withProtocol/"
     }
 
     private fun onConnectionSuccess(libs: List<LibrarySummary>, formattedHost: String, token: String, refreshToken: String? = null) {

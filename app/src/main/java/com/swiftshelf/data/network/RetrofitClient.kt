@@ -95,13 +95,15 @@ object RetrofitClient {
         }
 
         val loggingLevel = if (BuildConfig.DEBUG) {
-            HttpLoggingInterceptor.Level.HEADERS
+            HttpLoggingInterceptor.Level.BODY
         } else {
             HttpLoggingInterceptor.Level.NONE
         }
-        val loggingInterceptor = HttpLoggingInterceptor().apply {
+        val loggingInterceptor = HttpLoggingInterceptor { message ->
+            android.util.Log.d("SwiftShelf/HTTP", message)
+        }.apply {
             level = loggingLevel
-            android.util.Log.d("RetrofitClient", "Initializing with token: ${token.take(20)}...")
+            android.util.Log.d("RetrofitClient", "Initializing: url=$baseUrl tokenLen=${token.length}")
         }
 
         val client = OkHttpClient.Builder()
@@ -159,7 +161,9 @@ object RetrofitClient {
         } else {
             HttpLoggingInterceptor.Level.NONE
         }
-        val loggingInterceptor = HttpLoggingInterceptor().apply {
+        val loggingInterceptor = HttpLoggingInterceptor { message ->
+            android.util.Log.d("SwiftShelf/HTTP", message)
+        }.apply {
             level = loggingLevel
         }
 
